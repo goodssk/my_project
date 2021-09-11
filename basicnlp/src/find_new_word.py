@@ -1,4 +1,6 @@
 #coding: utf-8
+import math
+
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -6,20 +8,7 @@ import collections
 import jieba.posseg as psg
 from pyhanlp import *
 import re
-
-class find_word:
-    def __init__(self, data):
-        self.data = data
-        self.word_dict = collections.Counter(''.join(self.data))
-        self.word_count = len(''.join(self.data))
-        self.myre = {2: '(..)', 3: '(...)', 4: '(....)', 5: '(.....)', 6: '(......)', 7: '(.......)'}
-        self.word_frequency = []
-
-    def sta_fre(self):
-        self.word_frequency.append(pd.Series(list(self.data)))
-        print(self.word_frequency)
-
-
+from numpy import log
 
 
 def word_recognition(sentences, tag_dict, tool='jieba'):
@@ -56,6 +45,86 @@ def extrac_word():
     #print(phrase)
     #print(parse)
 
+
+class find_word:
+    def __init__(self, path):
+        self.path = path
+        self.data = self.read_data()
+        self.word_dict = collections.Counter(''.join(self.data))
+        self.word_count = len(''.join(self.data))
+        self.myre = {2: '(..)', 3: '(...)', 4: '(....)', 5: '(.....)', 6: '(......)', 7: '(.......)'}
+        self.word_frequency = []
+        self.nearby_word = []
+        self.drop_dict = [u'，', u'\n', u'。', u'、', u'：', u'(', u')', u'[', u']', u'.', u',', u' ', u'\u3000', u'”', u'“', u'？', u'?', u'！', u'‘', u'’', u'…']
+        self.max_length = 2
+        self.min_count = 10
+        self.min_value = 0
+        self.data = ''.join(self.data)
+        for i in self.drop_dict:
+            self.data = self.data.replace(i, '')
+
+    def sta_fre(self):
+        self.word_frequency.append(pd.Series(list(self.data)).value_counts())
+        print(self.word_frequency)
+
+        for length in range(2, self.max_length+1):
+            self.word_frequency.append([])
+            for i in range(length):
+                self.word_frequency[length-1] += re.findall(self.myre[length], self.data[i:])
+            self.word_frequency[length-1] = pd.Series(self.word_frequency[length-1]).value_counts()
+            self.word_frequency[length-1] = self.word_frequency[length-1][self.word_frequency[length-1]>self.min_count]
+
+        print(self.word_frequency)
+
+    ### 最后得到每个词的凝聚度，左熵和又熵
+    ### 计算互信息
+    def cal_MI(self):
+        for length in range(2, self.max_length+1):
+            for word in self.word_frequency[length-1]:
+                PIN = []
+                for i in range(len(word)-1):
+                    unite_count = self.word_frequency[length-1][word]
+                    left_count = self.word_frequency[i][word[:i]]
+                    right_count = self.word_frequency[len(word)-1-i][word[i:]]
+                    current_pin = unite_count/self.word_count*math.log(unite_count*self.word_count/(left_count*right_count))
+                    PIN.append(current_pin)
+                min(PIN)
+
+    def cal_s(self, sl):
+        return -((sl / sl.sum()).apply(log) * sl / sl.sum()).sum()
+
+    def cal_left_entropy(self):
+        for i in range(2, self.max_length+1):
+            pp = []
+            for j in range(i+2):
+                pp += re.findall('(.)%s(.)' % self.myre[i], self.data[j:])
+            pp = pd.DataFrame(pp).set_index(1).sort_index()
+            index = pp.index
+            pim_left = list(map(lambda s: self.cal_s(pd.Series(pp[0][s]).value_counts()), index))
+            pp = pp[np.array(pim_left)>self.min_value]
+            pim_left = np.array(pim_left)
+            pim_left = pim_left[np.where(pim_left > self.min_value)]
+            pp[3] = pim_left
+
+            pim_right = list(map(lambda s: self.cal_s(pd.Series(pp[2][s]).value_counts()), pp.index))
+            pp = pp[np.array(pim_right) > self.min_value]
+            pim_right = np.array(pim_right)
+            pim_right = pim_left[np.where(pim_right > self.min_value)]
+            pp[4] = pim_right
+            pp = pp[~pp.index.duplicated(keep="first")]
+            pp.to_csv('data.csv')
+
+
+    def read_data(self):
+        with open(self.path, encoding='utf-8') as f:
+            data = [line.strip() for line in f.readlines()]
+        return data
+
+
+if __name__ == '__main__':
+    path = '../data/zeng.txt'
+    new_word = find_word(path)
+    new_word.cal_left_entropy()
 # sentence = '怎么又生气了你是怎么了'
 # for i
 # a = re.findall('(...)', )
