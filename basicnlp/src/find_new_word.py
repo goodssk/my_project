@@ -52,68 +52,99 @@ class find_word:
         self.data = self.read_data()
         self.word_dict = collections.Counter(''.join(self.data))
         self.word_count = len(''.join(self.data))
-        self.myre = {2: '(..)', 3: '(...)', 4: '(....)', 5: '(.....)', 6: '(......)', 7: '(.......)'}
+        self.myre = {1: '([\u4E00-\u9FFF])', 2: '([\u4E00-\u9FFF]{2})', 3: '([\u4E00-\u9FFF]{3})', 4: '([\u4E00-\u9FFF]{4})', 5: '([\u4E00-\u9FFF]{5})', 6: '([\u4E00-\u9FFF]{6})'}
+
         self.word_frequency = []
+        self.word_lr_frequency = []
         self.nearby_word = []
+        self.word_PIN = []
         self.drop_dict = [u'，', u'\n', u'。', u'、', u'：', u'(', u')', u'[', u']', u'.', u',', u' ', u'\u3000', u'”', u'“', u'？', u'?', u'！', u'‘', u'’', u'…']
-        self.max_length = 2
-        self.min_count = 10
-        self.min_value = 0
-        self.data = ''.join(self.data)
-        for i in self.drop_dict:
-            self.data = self.data.replace(i, '')
+        self.max_length = 4
+        self.min_MI = 4
+        self.min_left_entropy = 1
+        self.min_right_entropy = 1
 
-    def sta_fre(self):
-        self.word_frequency.append(pd.Series(list(self.data)).value_counts())
-        print(self.word_frequency)
-
-        for length in range(2, self.max_length+1):
+    ### 得到所有相邻的词
+    def get_nearby_word(self):
+        self.word_frequency.append(pd.Series(re.findall(self.myre[1], ','.join(self.data))).value_counts())
+        for i in range(2, self.max_length+1):
+            print(i)
             self.word_frequency.append([])
-            for i in range(length):
-                self.word_frequency[length-1] += re.findall(self.myre[length], self.data[i:])
-            self.word_frequency[length-1] = pd.Series(self.word_frequency[length-1]).value_counts()
-            self.word_frequency[length-1] = self.word_frequency[length-1][self.word_frequency[length-1]>self.min_count]
+            for line in self.data:
+                sub_lines = re.findall('([\u4E00-\u9FFF]+)', line)
+                for sub_line in sub_lines:
+                    for j in range(min(self.max_length, len(sub_line))):
+                        self.word_frequency[i-1] += re.findall(self.myre[i], sub_line[j:])
+            self.word_frequency[i-1] = pd.Series(self.word_frequency[i-1]).value_counts()
 
-        print(self.word_frequency)
+    def get_left_right_word(self):
+        for i in range(2, self.max_length+1):
+            self.word_lr_frequency.append([])
+            for line in self.data:
+                sub_lines = re.findall('([\u4E00-\u9FFF]+)', line)
+                for sub_line in sub_lines:
+                    sub_line = 's' + str(sub_line) + 'e'
+                    for j in range(min(i+2, len(sub_line))):
+                        self.word_lr_frequency[i-2] += re.findall('(.)%s(.)' % self.myre[i], sub_line[j:])
+            self.word_lr_frequency[i-2] = pd.DataFrame(self.word_lr_frequency[i-2], columns=['left_word', 'word', 'right_word']).set_index('word').sort_index()
+
 
     ### 最后得到每个词的凝聚度，左熵和又熵
     ### 计算互信息
     def cal_MI(self):
+        self.get_nearby_word()
         for length in range(2, self.max_length+1):
-            for word in self.word_frequency[length-1]:
+            print(length)
+            PINs = []
+            for word in self.word_frequency[length-1].index:
                 PIN = []
-                for i in range(len(word)-1):
-                    unite_count = self.word_frequency[length-1][word]
-                    left_count = self.word_frequency[i][word[:i]]
-                    right_count = self.word_frequency[len(word)-1-i][word[i:]]
+                for i in range(1, len(str(word))):
+                    unite_count = self.word_frequency[length-1][str(word)]
+                    left_count = self.word_frequency[i-1][str(word)[:i]]
+                    right_count = self.word_frequency[len(str(word))-1-i][str(word)[i:]]
                     current_pin = unite_count/self.word_count*math.log(unite_count*self.word_count/(left_count*right_count))
                     PIN.append(current_pin)
-                min(PIN)
+                PINs.append(min(PIN))
+            PINs = pd.Series(PINs)
+            PINs.index = self.word_frequency[length-1].index
+            print(len(PINs))
+            PINs = PINs[PINs.values>0.00001]
+            print(len(PINs))
+            self.word_PIN.append(PINs)
+            print(PINs)
 
     def cal_s(self, sl):
         return -((sl / sl.sum()).apply(log) * sl / sl.sum()).sum()
 
     def cal_left_entropy(self):
+        self.get_left_right_word()
+        self.cal_MI()
         for i in range(2, self.max_length+1):
-            pp = []
-            for j in range(i+2):
-                pp += re.findall('(.)%s(.)' % self.myre[i], self.data[j:])
-            pp = pd.DataFrame(pp).set_index(1).sort_index()
-            index = pp.index
-            pim_left = list(map(lambda s: self.cal_s(pd.Series(pp[0][s]).value_counts()), index))
-            pp = pp[np.array(pim_left)>self.min_value]
-            pim_left = np.array(pim_left)
-            pim_left = pim_left[np.where(pim_left > self.min_value)]
-            pp[3] = pim_left
+            index = np.intersect1d(self.word_PIN[i-2].index, self.word_lr_frequency[i-2].index)
+            pp = self.word_lr_frequency[i-2]
+            left_entropy = list(map(lambda s: self.cal_s(pd.Series(pp['left_word'][s]).value_counts()), index))
+            pp['left_entropy'] = pd.Series(left_entropy, index=index)
+            pp = pp[pp['left_entropy']>self.min_left_entropy]
+            self.word_lr_frequency[i-2] = pp
 
-            pim_right = list(map(lambda s: self.cal_s(pd.Series(pp[2][s]).value_counts()), pp.index))
-            pp = pp[np.array(pim_right) > self.min_value]
-            pim_right = np.array(pim_right)
-            pim_right = pim_left[np.where(pim_right > self.min_value)]
-            pp[4] = pim_right
-            pp = pp[~pp.index.duplicated(keep="first")]
-            pp.to_csv('data.csv')
-
+    def cal_right_entropy(self):
+        self.cal_left_entropy()
+        for i in range(2, self.max_length + 1):
+            pp = self.word_lr_frequency[i - 2]
+            right_entropy = list(map(lambda s: self.cal_s(pd.Series(pp['right_word'][s]).value_counts()), pp.index))
+            pp['right_entropy'] = right_entropy
+            pp = pp[pp['right_entropy']>self.min_right_entropy]
+            self.word_lr_frequency[i - 2] = pp
+        print(self.word_PIN)
+        self.word_lr_frequency = pd.concat(self.word_lr_frequency)
+        self.word_lr_frequency.to_csv('result1.csv')
+        self.word_PIN = pd.concat(self.word_PIN)
+        pin = []
+        for index in self.word_lr_frequency.index:
+            pin.append(self.word_PIN[index])
+        self.word_lr_frequency['IM'] = pin
+        self.word_lr_frequency = self.word_lr_frequency[~self.word_lr_frequency.word.duplicated(keep='last')]
+        self.word_lr_frequency.to_csv('result2.csv')
 
     def read_data(self):
         with open(self.path, encoding='utf-8') as f:
@@ -124,8 +155,4 @@ class find_word:
 if __name__ == '__main__':
     path = '../data/zeng.txt'
     new_word = find_word(path)
-    new_word.cal_left_entropy()
-# sentence = '怎么又生气了你是怎么了'
-# for i
-# a = re.findall('(...)', )
-# print(a)
+    new_word.cal_right_entropy()

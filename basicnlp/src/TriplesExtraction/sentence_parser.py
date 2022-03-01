@@ -41,7 +41,6 @@ class LtpParser:
                         child_dict[arcs[arc_index].relation] = []
                         child_dict[arcs[arc_index].relation].append(arc_index)
             child_dict_list.append(child_dict)
-        print(child_dict_list)
         rely_id = [arc.head for arc in arcs]  # 提取依存父节点id
         relation = [arc.relation for arc in arcs]  # 提取依存关系
         heads = ['Root' if id == 0 else words[id - 1] for id in rely_id]  # 匹配依存父节点词语
@@ -49,7 +48,6 @@ class LtpParser:
             # ['ATT', '***', 0, 'nh', '总理', 1, 'n']
             a = [relation[i], words[i], i, postags[i], heads[i], rely_id[i]-1, postags[rely_id[i]-1]]
             format_parse_list.append(a)
-        print('format', format_parse_list)
         return child_dict_list, format_parse_list
 
     '''parser主函数'''
@@ -57,7 +55,6 @@ class LtpParser:
         words = list(self.segmentor.segment(sentence))
         postags = list(self.postagger.postag(words))
         arcs = self.parser.parse(words, postags)
-        print('arcs', arcs)
         child_dict_list, format_parse_list = self.build_parse_child_dict(words, postags, arcs)
         roles_dict = self.format_labelrole(words, postags)
         return words, postags, child_dict_list, roles_dict, format_parse_list
